@@ -2,6 +2,7 @@ include/htslib
 CMakeCache.txt
 CMakeFiles
 Makefile
+junction_extractor
 vacuum
 cmake-build-debug
 cmake_install.cmake
