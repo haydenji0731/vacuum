@@ -67,5 +67,5 @@ target_link_libraries(vacuum ${CMAKE_SOURCE_DIR}/include/htslib/libhts.a z bz2 p
 install(TARGETS vacuum DESTINATION ${CMAKE_INSTALL_PREFIX})
 
 add_dependencies(junction_extractor htslib)
-target_link_libraries(junction_extractor ${CMAKE_SOURCE_DIR}/include/htslib/libhts.a z lzma bz2 pthread)
+target_link_libraries(junction_extractor ${CMAKE_SOURCE_DIR}/include/htslib/libhts.a z bz2 pthread)
 install(TARGETS junction_extractor DESTINATION ${CMAKE_INSTALL_PREFIX})
