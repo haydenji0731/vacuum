@@ -55,18 +55,18 @@ struct CJunc {
         return (start==a.start && end==a.end && strcmp(chr, a.chr) == 0);
     }
 
-    // bool operator<(const CJunc& a) {
-    //     int chr_cmp = strcmp(chr, a.chr);
-    //     if (chr_cmp == 0) {
-    //         if (start == a.start) {
-    //             return (end < a.end);
-    //         } else {
-    //             return (start < a.start);
-    //         }
-    //     } else {
-    //         return (chr_cmp < 0); //lexicoographic order
-    //     }
-    // }
+    bool operator<(const CJunc& a) {
+        int chr_cmp = strverscmp(chr, a.chr);
+        if (chr_cmp == 0) {
+            if (start == a.start) {
+                return (end < a.end);
+            } else {
+                return (start < a.start);
+            }
+        } else {
+            return (chr_cmp < 0); //version order 
+        }
+    }
 };
 
 
