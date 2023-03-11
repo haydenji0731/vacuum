@@ -54,18 +54,19 @@ struct CJunc {
     bool operator==(const CJunc& a) {
         return (start==a.start && end==a.end && strcmp(chr, a.chr) == 0);
     }
-    bool operator<(const CJunc& a) {
-        int chr_cmp = strcmp(chr, a.chr);
-        if (chr_cmp == 0) {
-            if (start == a.start) {
-                return (end < a.end);
-            } else {
-                return (start < a.start);
-            }
-        } else {
-            return (chr_cmp < 0);
-        }
-    }
+
+    // bool operator<(const CJunc& a) {
+    //     int chr_cmp = strcmp(chr, a.chr);
+    //     if (chr_cmp == 0) {
+    //         if (start == a.start) {
+    //             return (end < a.end);
+    //         } else {
+    //             return (start < a.start);
+    //         }
+    //     } else {
+    //         return (chr_cmp < 0); //lexicoographic order
+    //     }
+    // }
 };
 
 
@@ -92,8 +93,8 @@ void loadBed(GStr inbedname) {
             gline=tmp;
             cnt++;
         }
-        char* chrname =junc[0].detach();
-        char chr = chrname[strlen(chrname) - 1];
+        char* chr =junc[0].detach();
+        //char chr = chrname[strlen(chrname) - 1];
         CJunc j(junc[1].asInt(), junc[2].asInt(), *junc[5].detach(), chr);
         spur_juncs.Add(j);
     }
@@ -144,13 +145,13 @@ int main(int argc, char *argv[]) {
 
         if (brec.exons.Count() > 1) {
             const char* chrn=brec.refName();
-            //char chr = chrname[strlen(chrname) - 1]; //TODO -> ask Hayden
             char strand = brec.spliceStrand();
             bool spur = false;
             for (int i = 1; i < brec.exons.Count(); i++) {
                 CJunc j(brec.exons[i-1].end, brec.exons[i].start-1, strand, chr);
                 if (spur_juncs.Exists(j)) {
                     spur = true;
+                    spur_cnt++;
                     break;
                 }
             }
