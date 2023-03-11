@@ -46,7 +46,7 @@ bool verbose=false;
 struct CJunc {
     int start, end;
     char strand;
-    const chr*;
+    const char* chr;
     CJunc(int vs=0, int ve=0, char vstrand='.', const char* vchr='*'):
             start(vs), end(ve), strand(vstrand), chr(vchr){ }
 
@@ -80,9 +80,10 @@ struct PBRec {
 void processOptions(int argc, char **argv);
 
 
-void loadBed(GStr inbedname) {
+std::set<CJunc> loadBed(GStr inbedname) {
     std::ifstream bed_f(inbedname);
     std::string line;
+    std::set<CJunc> spur_juncs;
     while (getline(bed_f, line)) {
         GStr gline = line.c_str();
         GVec<GStr> junc;
@@ -93,10 +94,9 @@ void loadBed(GStr inbedname) {
             gline=tmp;
             cnt++;
         }
-        char* chr =junc[0].detach();
-        //char chr = chrname[strlen(chrname) - 1];
+        const char* chr =junc[0].detach();
         CJunc j(junc[1].asInt(), junc[2].asInt(), *junc[5].detach(), chr);
-        spur_juncs.Add(j);
+        spur_juncs.insert(j);
     }
 }
 
@@ -115,6 +115,7 @@ void flushBrec(GVec<PBRec> &pbrecs) {
         outfile->write(pbrecs[i].r);
     }
 }
+
 
 int main(int argc, char *argv[]) {
     processOptions(argc, argv);
@@ -142,9 +143,8 @@ int main(int argc, char *argv[]) {
 
         bam1_t* in_rec = brec.get_b();
         curr_key = std::make_tuple(brec.name(), brec.refName(), brec.get_b()->core.pos, brec.get_b()->core.mpos);
-
         if (brec.exons.Count() > 1) {
-            const char* chrn=brec.refName();
+            const char* chr=brec.refName();
             char strand = brec.spliceStrand();
             bool spur = false;
             for (int i = 1; i < brec.exons.Count(); i++) {
