@@ -33,61 +33,41 @@ const char* USAGE="Vacuum v" VERSION "\n"
 GStr inbamname;
 GStr inbedname;
 GStr outfname;
+GStr outfname_removed;
 GSamWriter* outfile=NULL;
+GSamWriter* removed_outfile=NULL;
+std::unordered_map<std::string, int> ht;
+GArray<CJunc> spur_juncs;
+std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>> removed_brecs;
+int spliced_alignments=0;
+bool verbose=false;
+
 
 struct CJunc {
     int start, end;
-    char strand, chr;
-    CJunc(int vs=0, int ve=0, char vstrand='+', char vchr='1'):
+    char strand;
+    const chr*;
+    CJunc(int vs=0, int ve=0, char vstrand='.', const char* vchr='*'):
             start(vs), end(ve), strand(vstrand), chr(vchr){ }
 
     // overload operators
     bool operator==(const CJunc& a) {
-        return (start==a.start && end==a.end && chr==a.chr);
+        return (start==a.start && end==a.end && strcmp(chr, a.chr) == 0);
     }
     bool operator<(const CJunc& a) {
-        if (chr == a.chr) {
+        int chr_cmp = strcmp(chr, a.chr);
+        if (chr_cmp == 0) {
             if (start == a.start) {
                 return (end < a.end);
             } else {
                 return (start < a.start);
             }
         } else {
-            return (chr < a.chr);
+            return (chr_cmp < 0);
         }
     }
 };
 
-struct CRead {
-    char* read;
-    int pair, spurCnt;
-    CRead(int vp=0, const char* vr= (char*) "ERR", int vsc=1):
-            pair(vp), spurCnt(vsc){
-        read = (char *) malloc(strlen(vr) + 1);
-        strcpy(read, vr);
-    }
-
-    // overload operators
-    bool operator==(const CRead& a) {
-        return (pair == a.pair && !strcmp(read, a.read));
-    }
-
-    bool operator<(const CRead& a) {
-        if (!strcmp(read, a.read)) {
-            return (pair < a.pair);
-        } else {
-            return (strcmp(read, a.read) < 0);
-        }
-    }
-
-    void incSpurCnt() {
-        spurCnt++;
-    }
-
-    void clear() {
-        free(read);
-    }
-};
 
 struct PBRec {
     GSamRecord* r;
@@ -95,10 +75,9 @@ struct PBRec {
     r(rec){ }
 };
 
+
 void processOptions(int argc, char **argv);
 
-GArray<CJunc> spur_juncs;
-GVec<PBRec> kept_brecs;
 
 void loadBed(GStr inbedname) {
     std::ifstream bed_f(inbedname);
@@ -120,10 +99,6 @@ void loadBed(GStr inbedname) {
     }
 }
 
-// slower solution involves GArray
-//GArray<CRead> spur_reads(true);
-// settled with unordered map (i.e., hash table)
-std::unordered_map<std::string, int> ht;
 
 void flushBrec(GVec<PBRec> &pbrecs) {
     if (pbrecs.Count()==0) return;
@@ -136,17 +111,6 @@ void flushBrec(GVec<PBRec> &pbrecs) {
             int new_nh = pbrecs[i].r->tag_int("NH", 0) - ht[kv];
             pbrecs[i].r->add_int_tag("NH", new_nh);
         }
-// using GArray
-//        CRead tmp(pbrecs[i].r->pairOrder(), pbrecs[i].r->name());
-//        int idx;
-//        if (spur_reads.Found(tmp, idx)) {
-//            int new_nh = pbrecs[i].r->tag_int("NH", 0) - spur_reads[idx].spurCnt;
-//            pbrecs[i].r->add_int_tag("NH", new_nh);
-//        }
-// for testing
-//        if (!strcmp(pbrecs[i].r->name(), "ERR188044.24337229")) {
-//            std::cout << pbrecs[i].r->tag_int("NH", 0) << std::endl;
-//        }
         outfile->write(pbrecs[i].r);
     }
 }
@@ -156,21 +120,31 @@ int main(int argc, char *argv[]) {
     loadBed(inbedname);
     GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
     outfile=new GSamWriter(outfname, bamreader.header(), GSamFile_BAM);
-    GSamRecord brec;
+
+    if (outfname_removed.is_empty()) {
+        removed_outfile = NULL;
+    } else {
+        removed_outfile=new GSamWriter(outfname_removed, bamreader.header(), GSamFile_BAM);
+    }
+
+    std::cout << "brrrm! identifying alignment records with spurious splice junctions" << std::endl;
     auto start=std::chrono::high_resolution_clock::now();
     int spur_cnt = 0;
-    std::cout << "brrrm! identifying alignment records with spurious splice junctions" << std::endl;
+    GSamRecord brec;
+    std::tuple<std::string, std::string, int, int> prev_key;
+    std::tuple<std::string, std::string, int, int> curr_key;
+    
     while (bamreader.next(brec)) {
-        bam1_t* in_rec = brec.get_b();
-        // check if current record is unaligned;
-        int flag = in_rec->core.flag;
-        int unmapped = 4;
-        if ((flag & unmapped) == unmapped) {
+        if (brec.isUnmapped()) {
             continue;
         }
+
+        bam1_t* in_rec = brec.get_b();
+        curr_key = std::make_tuple(brec.name(), brec.refName(), brec.get_b()->core.pos, brec.get_b()->core.mpos);
+
         if (brec.exons.Count() > 1) {
-            const char* chrname=brec.refName();
-            char chr = chrname[strlen(chrname) - 1];
+            const char* chrn=brec.refName();
+            //char chr = chrname[strlen(chrname) - 1]; //TODO -> ask Hayden
             char strand = brec.spliceStrand();
             bool spur = false;
             for (int i = 1; i < brec.exons.Count(); i++) {
@@ -226,7 +200,7 @@ int main(int argc, char *argv[]) {
 }
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;version;SMLPEDVho:");
+    GArgs args(argc, argv, "help;verbose;version;SMLPEDVho:r:");
     args.printError(USAGE, true);
 
     if (args.getOpt('h') || args.getOpt("help")) {
@@ -264,4 +238,12 @@ void processOptions(int argc, char* argv[]) {
         GMessage("\nError: output filename must be provided.");
         exit(1);
     }
+
+    outfname_removed=args.getOpt('r');
+    verbose=(args.getOpt("verbose")!=NULL || args.getOpt('V')!=NULL);
+    if (verbose) {
+        fprintf(stderr, "Running Vacuum " VERSION ". Command line:\n");
+        args.printCmdLine(stderr);
+    }
+
 }
