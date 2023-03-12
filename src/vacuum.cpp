@@ -57,7 +57,11 @@ struct CJunc {
         int chr_cmp = strverscmp(chr, a.chr);
         if (chr_cmp == 0) {
             if (start == a.start) {
-                return (end < a.end);
+                if (end == a.end) {
+                    return (strand < a.strand);
+                } else {
+                    return (end < a.end);
+                }
             } else {
                 return (start < a.start);
             }
@@ -134,16 +138,12 @@ void filter_bam(GSamReader &bamreader, int unmapped, GSamWriter* outfile, GSamWr
 
 
     while (bamreader.next(brec)) {
-        bool brec_to_outfile = true;
-
         if (brec.isUnmapped()) {
             continue;
         }
-        
+
         std::tuple<std::string, std::string, int, int> key = std::make_tuple(brec.name(), brec.refName(), 
                                                             brec.get_b()->core.pos, brec.get_b()->core.mpos);
-        
-        
         auto it = removed_brecs.find(key);
         if (it != removed_brecs.end()) {
             for (PBRec* item : it->second) {
@@ -161,8 +161,6 @@ void filter_bam(GSamReader &bamreader, int unmapped, GSamWriter* outfile, GSamWr
         if (!brec.isPaired()) {
             continue;
         }
-
-
 
         std::tuple<std::string, std::string, int, int> mate_key = std::make_tuple(brec.name(), brec.refName(),
                                                                 brec.get_b()->core.mpos, brec.get_b()->core.pos);
