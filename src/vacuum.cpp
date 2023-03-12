@@ -128,7 +128,7 @@ bool check_identical_cigar(bam1_t* rec1, bam1_t* rec2) {
 }
 
 
-void filter_bam(GSamReader &bamreader, int unmapped, GSamWriter* outfile, GSamWriter* removed_outfile,
+void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                  std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>>& removed_brecs) {
     
     GSamRecord prev_brec;
@@ -136,7 +136,7 @@ void filter_bam(GSamReader &bamreader, int unmapped, GSamWriter* outfile, GSamWr
     std::tuple<std::string, std::string, int, int> prev_key;
     std::map<std::tuple<std::string, std::string, int, int>, int> mates_unpaired;
 
-
+    GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
     while (bamreader.next(brec)) {
         if (brec.isUnmapped()) {
             continue;
@@ -145,18 +145,24 @@ void filter_bam(GSamReader &bamreader, int unmapped, GSamWriter* outfile, GSamWr
         std::tuple<std::string, std::string, int, int> key = std::make_tuple(brec.name(), brec.refName(), 
                                                             brec.get_b()->core.pos, brec.get_b()->core.mpos);
         auto it = removed_brecs.find(key);
+        
         if (it != removed_brecs.end()) {
+            bool processed = false;
             for (PBRec* item : it->second) {
                 bam1_t* in_rec = brec.get_b();
                 bam1_t* rm_rec = item->r->get_b();
                 if( check_identical_cigar(in_rec, rm_rec) ) { 
                     if (removed_outfile != NULL) {
                         removed_outfile -> write(item->r);
-                        continue;
+                        processed = true;
                     }   
                 }
             } 
+            if (processed) {
+                continue;
         }
+        }
+
 
         if (!brec.isPaired()) {
             continue;
@@ -203,13 +209,14 @@ void filter_bam(GSamReader &bamreader, int unmapped, GSamWriter* outfile, GSamWr
             brec.add_int_tag("NH", new_nh);
         }
 
-            //update flag to be unpaired
+            //update flag and tlen
             if (update_flag) {
-                brec.get_b()->core.flag &= 3;
+                brec.get_b()->core.flag &= ~3;
+                brec.get_b()->core.isize = 0; //set template len to zero
+                brec.get_b()->core.mpos =  brec.get_b()->core.pos; //set mate pos to pos 
             }
-        
         }
-
+        
         //write to outfile:
         outfile->write(&brec);
     }
@@ -278,13 +285,25 @@ int main(int argc, char *argv[]) {
                     val++;
                     ht[kv] = val;
                 }
+
+                //add spurs to removed_brecs:                
+                GSamRecord *rec = new GSamRecord(curr_brec);
+                PBRec *newpbr = new PBRec(rec);
+                if (removed_brecs.find(curr_key) == removed_brecs.end()) {
+                    std::vector<PBRec*> v;
+                    v.push_back(newpbr);
+                    removed_brecs[curr_key] = v;
+                } else {
+                    removed_brecs[curr_key].push_back(newpbr);
+                }
+
             }
-            prev_key = curr_key;
         } 
     }
 
     std::cout << "vacuuming completed. writing only clean bam records to the output file." << std::endl;
-    //flushBrec(kept_brecs);
+    filter_bam(outfile, removed_outfile, removed_brecs);
+    
     bamreader.bclose();
     delete outfile;
     if (removed_outfile != NULL) {
@@ -294,6 +313,8 @@ int main(int argc, char *argv[]) {
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
 
     if (verbose) {
+        //print size of removed_brecs
+        std::cout << "Size of removed_brecs: " << removed_brecs.size() << std::endl;
         std::cout << "Input bam file: " << inbamname.chars() << std::endl;
         std::cout << "Count of spliced alignments: " << spliced_alignments << std::endl;
         std::cout << spur_cnt << " spurious alignment records were removed." << std::endl;
