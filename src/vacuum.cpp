@@ -8,6 +8,8 @@
 #include <chrono>
 #include <unordered_map>
 #include <gclib/GHashMap.hh>
+#include <set>
+#include <tuple>
 
 #define VERSION "0.0.1"
 
@@ -30,24 +32,12 @@ const char* USAGE="Vacuum v" VERSION "\n"
                   "  --version\tShow program version and exit\n"
                   "  -o\tFile for BAM output\n";
 
-GStr inbamname;
-GStr inbedname;
-GStr outfname;
-GStr outfname_removed;
-GSamWriter* outfile=NULL;
-GSamWriter* removed_outfile=NULL;
-std::unordered_map<std::string, int> ht;
-GArray<CJunc> spur_juncs;
-std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>> removed_brecs;
-int spliced_alignments=0;
-bool verbose=false;
-
 
 struct CJunc {
     int start, end;
     char strand;
     const char* chr;
-    CJunc(int vs=0, int ve=0, char vstrand='.', const char* vchr='*'):
+    CJunc(int vs=0, int ve=0, char vstrand='.', const char* vchr="*"):
             start(vs), end(ve), strand(vstrand), chr(vchr){ }
 
     // overload operators
@@ -55,7 +45,7 @@ struct CJunc {
         return (start==a.start && end==a.end && strcmp(chr, a.chr) == 0);
     }
 
-    bool operator<(const CJunc& a) {
+    bool operator<(const CJunc& a) const {
         int chr_cmp = strverscmp(chr, a.chr);
         if (chr_cmp == 0) {
             if (start == a.start) {
@@ -98,28 +88,39 @@ std::set<CJunc> loadBed(GStr inbedname) {
         CJunc j(junc[1].asInt(), junc[2].asInt(), *junc[5].detach(), chr);
         spur_juncs.insert(j);
     }
+    return spur_juncs;
 }
 
 
-void flushBrec(GVec<PBRec> &pbrecs) {
-    if (pbrecs.Count()==0) return;
-    for (int i=0; i < pbrecs.Count(); i++) {
-        std::string kv = pbrecs[i].r->name();
-        std::string tmp = std::to_string(pbrecs[i].r->pairOrder());
-        kv += ";";
-        kv += tmp;
-        if (ht.find(kv) != ht.end()) {
-            int new_nh = pbrecs[i].r->tag_int("NH", 0) - ht[kv];
-            pbrecs[i].r->add_int_tag("NH", new_nh);
-        }
-        outfile->write(pbrecs[i].r);
-    }
-}
+// void flushBrec(GVec<PBRec> &pbrecs) {
+//     if (pbrecs.Count()==0) return;
+//     for (int i=0; i < pbrecs.Count(); i++) {
+//         std::string kv = pbrecs[i].r->name();
+//         std::string tmp = std::to_string(pbrecs[i].r->pairOrder());
+//         kv += ";";
+//         kv += tmp;
+//         if (ht.find(kv) != ht.end()) {
+//             int new_nh = pbrecs[i].r->tag_int("NH", 0) - ht[kv];
+//             pbrecs[i].r->add_int_tag("NH", new_nh);
+//         }
+//         outfile->write(pbrecs[i].r);
+//     }
+// }
 
+GStr inbamname;
+GStr inbedname;
+GStr outfname;
+GStr outfname_removed;
+GSamWriter* outfile=NULL;
+GSamWriter* removed_outfile=NULL;
+std::unordered_map<std::string, int> ht;
+std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>> removed_brecs;
+int spliced_alignments=0;
+bool verbose=false;
 
 int main(int argc, char *argv[]) {
     processOptions(argc, argv);
-    loadBed(inbedname);
+    std::set<CJunc> spur_juncs = loadBed(inbedname);
     GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
     outfile=new GSamWriter(outfname, bamreader.header(), GSamFile_BAM);
 
@@ -132,37 +133,39 @@ int main(int argc, char *argv[]) {
     std::cout << "brrrm! identifying alignment records with spurious splice junctions" << std::endl;
     auto start=std::chrono::high_resolution_clock::now();
     int spur_cnt = 0;
-    GSamRecord brec;
+    int spliced_alignments = 0;
+    GSamRecord curr_brec;
+    GSamRecord prev_brec;
     std::tuple<std::string, std::string, int, int> prev_key;
     std::tuple<std::string, std::string, int, int> curr_key;
     
-    while (bamreader.next(brec)) {
-        if (brec.isUnmapped()) {
+
+    
+    while (bamreader.next(curr_brec)) {
+        if (curr_brec.isUnmapped()) {
             continue;
         }
 
-        bam1_t* in_rec = brec.get_b();
-        curr_key = std::make_tuple(brec.name(), brec.refName(), brec.get_b()->core.pos, brec.get_b()->core.mpos);
-        if (brec.exons.Count() > 1) {
-            const char* chr=brec.refName();
-            char strand = brec.spliceStrand();
-            bool spur = false;
-            for (int i = 1; i < brec.exons.Count(); i++) {
-                CJunc j(brec.exons[i-1].end, brec.exons[i].start-1, strand, chr);
-                if (spur_juncs.Exists(j)) {
+        bam1_t* in_rec = curr_brec.get_b();
+        curr_key = std::make_tuple(curr_brec.name(), curr_brec.refName(), 
+                                    curr_brec.get_b()->core.pos, curr_brec.get_b()->core.mpos);
+
+        bool spur = false;
+        if (curr_brec.exons.Count() > 1) {
+            spliced_alignments++;
+            const char* chr=curr_brec.refName();
+            char strand = curr_brec.spliceStrand();
+            for (int i = 1; i < curr_brec.exons.Count(); i++) {
+                CJunc j(curr_brec.exons[i-1].end, curr_brec.exons[i].start-1, strand, chr);
+                if (spur_juncs.find(j) != spur_juncs.end()) {
                     spur = true;
-                    spur_cnt++;
                     break;
                 }
             }
-            if (!spur) {
-                GSamRecord *rec = new GSamRecord(brec);
-                PBRec *newpbr = new PBRec(rec);
-                kept_brecs.Add(newpbr);
-            } else {
+            if (spur) {
                 spur_cnt++;
-                std::string kv = brec.name();
-                std::string tmp = std::to_string(brec.pairOrder());
+                std::string kv = curr_brec.name();
+                std::string tmp = std::to_string(curr_brec.pairOrder());
                 kv += ";";
                 kv += tmp;
                 // key not present
@@ -174,30 +177,26 @@ int main(int argc, char *argv[]) {
                     ht[kv] = val;
                 }
             }
-// using GArray
-//            } else {
-//                CRead cr(brec.pairOrder(), brec.name());
-//                int idx;
-//                if (spur_reads.Found(cr, idx)) {
-//                    spur_reads[idx].incSpurCnt();
-//                } else {
-//                    spur_reads.Add(cr);
-//                }
-//            }
-        } else {
-            GSamRecord *rec = new GSamRecord(brec);
-            PBRec* newpbr = new PBRec(rec);
-            kept_brecs.Add(newpbr);
-        }
+            prev_key = curr_key;
+        } 
     }
+
     std::cout << "vacuuming completed. writing only clean bam records to the output file." << std::endl;
-    flushBrec(kept_brecs);
+    //flushBrec(kept_brecs);
     bamreader.bclose();
     delete outfile;
+    if (removed_outfile != NULL) {
+        delete removed_outfile;
+    }
     auto end =std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
-    std::cout << spur_cnt << " spurious alignment records were removed." << std::endl;
-    std::cout << "Vacuuming completed in " << duration.count() << " seconds" << std::endl;
+
+    if (verbose) {
+        std::cout << "Input bam file: " << inbamname.chars() << std::endl;
+        std::cout << "Count of spliced alignments: " << spliced_alignments << std::endl;
+        std::cout << spur_cnt << " spurious alignment records were removed." << std::endl;
+        std::cout << "Vacuuming completed in " << duration.count() << " seconds" << std::endl;
+    }
 }
 
 void processOptions(int argc, char* argv[]) {
