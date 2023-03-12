@@ -32,6 +32,14 @@ const char* USAGE="Vacuum v" VERSION "\n"
                   "  --version\tShow program version and exit\n"
                   "  -o\tFile for BAM output\n";
 
+GStr inbamname;
+GStr inbedname;
+GStr outfname;
+GStr outfname_removed;
+std::unordered_map<std::string, int> ht;
+GSamWriter* outfile=NULL;
+GSamWriter* removed_outfile=NULL;
+bool remove_mate=false;
 
 struct CJunc {
     int start, end;
@@ -107,13 +115,109 @@ std::set<CJunc> loadBed(GStr inbedname) {
 //     }
 // }
 
-GStr inbamname;
-GStr inbedname;
-GStr outfname;
-GStr outfname_removed;
-GSamWriter* outfile=NULL;
-GSamWriter* removed_outfile=NULL;
-std::unordered_map<std::string, int> ht;
+bool check_identical_cigar(bam1_t* rec1, bam1_t* rec2) {
+    if (rec1->core.n_cigar == rec2->core.n_cigar && 
+        memcmp(bam_get_cigar(rec1), bam_get_cigar(rec2), rec1->core.n_cigar * sizeof(uint32_t)) == 0) {
+            return true;
+        }
+    return false;
+}
+
+
+void filter_bam(GSamReader &bamreader, int unmapped, GSamWriter* outfile, GSamWriter* removed_outfile,
+                 std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>>& removed_brecs) {
+    
+    GSamRecord prev_brec;
+    GSamRecord brec;
+    std::tuple<std::string, std::string, int, int> prev_key;
+    std::map<std::tuple<std::string, std::string, int, int>, int> mates_unpaired;
+
+
+    while (bamreader.next(brec)) {
+        bool brec_to_outfile = true;
+
+        if (brec.isUnmapped()) {
+            continue;
+        }
+        
+        std::tuple<std::string, std::string, int, int> key = std::make_tuple(brec.name(), brec.refName(), 
+                                                            brec.get_b()->core.pos, brec.get_b()->core.mpos);
+        
+        
+        auto it = removed_brecs.find(key);
+        if (it != removed_brecs.end()) {
+            for (PBRec* item : it->second) {
+                bam1_t* in_rec = brec.get_b();
+                bam1_t* rm_rec = item->r->get_b();
+                if( check_identical_cigar(in_rec, rm_rec) ) { 
+                    if (removed_outfile != NULL) {
+                        removed_outfile -> write(item->r);
+                        continue;
+                    }   
+                }
+            } 
+        }
+
+        if (!brec.isPaired()) {
+            continue;
+        }
+
+
+
+        std::tuple<std::string, std::string, int, int> mate_key = std::make_tuple(brec.name(), brec.refName(),
+                                                                brec.get_b()->core.mpos, brec.get_b()->core.pos);
+        
+        auto it_rem = removed_brecs.find(mate_key);
+        if (it_rem != removed_brecs.end()) {
+            int num_rem = it_rem->second.size(); //count of mates that need to be unpaired or removed:
+            bool update_flag = true;
+            if (num_rem > 1) {
+                //check how many mates have already been unpaired:
+                auto it_mts = mates_unpaired.find(mate_key);
+                int num_mts = it_mts->second; 
+                if (num_mts == num_rem) {
+                    update_flag = false;
+                    break;
+                }
+
+                //add mate_key to mates_unpaired:
+                if (mates_unpaired.find(mate_key) == mates_unpaired.end()) {
+                    mates_unpaired[mate_key] = 1;
+                } else {
+                    int val = mates_unpaired[mate_key];
+                    val++;
+                    mates_unpaired[mate_key] = val;
+                }
+            }
+
+            if (remove_mate) {
+                removed_outfile->write(&brec);
+                continue;
+            }
+
+             //update NH tag:
+            std::string kv = brec.name();
+            std::string tmp = std::to_string(brec.pairOrder());
+            kv += ";";
+            kv += tmp;
+            if (ht.find(kv) != ht.end()) {
+            int new_nh = brec.tag_int("NH", 0) - ht[kv];
+            brec.add_int_tag("NH", new_nh);
+        }
+
+            //update flag to be unpaired
+            if (update_flag) {
+                brec.get_b()->core.flag &= 3;
+            }
+        
+        }
+
+        //write to outfile:
+        outfile->write(&brec);
+    }
+}
+
+
 std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>> removed_brecs;
 int spliced_alignments=0;
 bool verbose=false;
@@ -200,7 +304,7 @@ int main(int argc, char *argv[]) {
 }
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;verbose;version;SMLPEDVho:r:");
+    GArgs args(argc, argv, "help;verbose;version;remove_mate;SMLPEDVho:r:");
     args.printError(USAGE, true);
 
     if (args.getOpt('h') || args.getOpt("help")) {
@@ -240,10 +344,14 @@ void processOptions(int argc, char* argv[]) {
     }
 
     outfname_removed=args.getOpt('r');
+
     verbose=(args.getOpt("verbose")!=NULL || args.getOpt('V')!=NULL);
     if (verbose) {
         fprintf(stderr, "Running Vacuum " VERSION ". Command line:\n");
         args.printCmdLine(stderr);
     }
+
+    remove_mate=(args.getOpt("remove_mate")!=NULL);
+
 
 }
