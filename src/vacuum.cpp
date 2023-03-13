@@ -131,17 +131,23 @@ bool check_identical_cigar(bam1_t* rec1, bam1_t* rec2) {
 void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                  std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>>& removed_brecs) {
     
+    GSamReader reader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
     GSamRecord prev_brec;
     GSamRecord brec;
     std::tuple<std::string, std::string, int, int> prev_key;
     std::map<std::tuple<std::string, std::string, int, int>, int> mates_unpaired;
 
-    GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
-    while (bamreader.next(brec)) {
+    int align_cnt = 0;
+    int rec_unmapped = 0;
+
+
+    while (reader.next(brec)) {
+        align_cnt++;
         if (brec.isUnmapped()) {
+            rec_unmapped++;
             continue;
         }
-
+        
         std::tuple<std::string, std::string, int, int> key = std::make_tuple(brec.name(), brec.refName(), 
                                                             brec.get_b()->core.pos, brec.get_b()->core.mpos);
         auto it = removed_brecs.find(key);
@@ -181,7 +187,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                 int num_mts = it_mts->second; 
                 if (num_mts == num_rem) {
                     update_flag = false;
-                    break;
+                    // break;
                 }
 
                 //add mate_key to mates_unpaired:
@@ -220,6 +226,11 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
         //write to outfile:
         outfile->write(&brec);
     }
+    
+    //close the reader
+    reader.bclose();
+    std::cout << rec_unmapped << " unmapped records skipped" << std::endl;
+    std::cout << align_cnt << " records written to " << outfname << std::endl;
 }
 
 
@@ -248,9 +259,10 @@ int main(int argc, char *argv[]) {
     std::tuple<std::string, std::string, int, int> prev_key;
     std::tuple<std::string, std::string, int, int> curr_key;
     
-
+    int align_cnt = 0;
     
     while (bamreader.next(curr_brec)) {
+        align_cnt++;
         if (curr_brec.isUnmapped()) {
             continue;
         }
@@ -301,10 +313,13 @@ int main(int argc, char *argv[]) {
         } 
     }
 
+    bamreader.bclose();
     std::cout << "vacuuming completed. writing only clean bam records to the output file." << std::endl;
+    std::cout << "Total number of alignments seen while vacuuming: " << align_cnt << std::endl;
+
     filter_bam(outfile, removed_outfile, removed_brecs);
     
-    bamreader.bclose();
+    
     delete outfile;
     if (removed_outfile != NULL) {
         delete removed_outfile;
