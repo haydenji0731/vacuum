@@ -41,6 +41,9 @@ GSamWriter* removed_outfile=NULL;
 bool remove_mate=false;
 bool verbose=false;
 std::unordered_map<std::string, int> ht;
+int num_mated_removed=0;
+int num_spur_removed=0;
+int num_alns_output=0;
 
 struct CJunc {
     int start, end;
@@ -137,6 +140,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                 bam1_t* rm_rec = item->r->get_b();
                 if( check_identical_cigar(in_rec, rm_rec) ) { 
                     found = true;
+                    num_spur_removed++;
                     if (removed_outfile != NULL) {
                         removed_outfile -> write(item->r);
                     }
@@ -151,6 +155,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
         //write to outfile if alignment is not paired
         if (!brec.isPaired()) {
             outfile->write(&brec);
+            num_alns_output++;
             continue;
         }
 
@@ -182,6 +187,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
             if (update_flag && remove_mate) {
                 if (removed_outfile != NULL) {
                     removed_outfile->write(&brec);
+                    num_mated_removed++;
                 }
                 continue;
             }
@@ -206,6 +212,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
         
         //write to outfile:
         outfile->write(&brec);
+        num_alns_output++;
     }
     
     //close the bamreader
@@ -238,6 +245,7 @@ int main(int argc, char *argv[]) {
     int num_alignments = 0;
     int num_removed_spliced = 0;
     int num_total_spliced = 0;
+    int num_unmapped = 0;
     GSamRecord brec;
     std::tuple<std::string, std::string, int, int> key;
     
@@ -245,6 +253,7 @@ int main(int argc, char *argv[]) {
     while (bamreader.next(brec)) {
         num_alignments++;
         if (brec.isUnmapped()) {
+            num_unmapped++;
             continue;
         }
 
@@ -300,9 +309,10 @@ int main(int argc, char *argv[]) {
 
     if (verbose) {
         std::cout << "Alignment removal identification completed in: " << duration_flagging << " second(s)" << std::endl;
-        std::cout << "Alignments flagged for removal: " << num_removed_spliced << std::endl;
-        std::cout << "Spliced alignments identified: " << num_total_spliced << std::endl;
         std::cout << "Total alignments processed: " << num_alignments << std::endl;
+        std::cout << "Unmapped alignments: " << num_unmapped << std::endl;
+        std::cout << "Spliced alignments identified: " << num_total_spliced << std::endl;
+        std::cout << "Alignments flagged for removal: " << num_removed_spliced << std::endl;
     }
 
 
@@ -319,6 +329,10 @@ int main(int argc, char *argv[]) {
     auto duration_vacuum = std::chrono::duration_cast<std::chrono::seconds>(end_vacuum - start_vacuum);
 
     if (verbose) {
+        if (removed_outfile != NULL && remove_mate) {
+            std::cout << "Mates of spliced alignments removed: " << num_mated_removed << std::endl;
+        }
+        std::cout << "Alignments written to output: " << num_alns_output << std::endl;
         std::cout << "Cleaning completed in: " << duration_vacuum.count() << " second(s)" << std::endl;
         std::cout << std::endl;
         std::cout << "Congratulations! Your vacuumed BAM file is now optimized for analysis." << std::endl;
