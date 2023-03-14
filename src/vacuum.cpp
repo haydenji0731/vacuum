@@ -229,8 +229,10 @@ int main(int argc, char *argv[]) {
 
     auto start_vacuum=std::chrono::high_resolution_clock::now();
     if (verbose) {
-        std::cout << "brrrm! Flagging alignment records for removal" << std::endl;
-        std::cout << "Running vacuum on input bam file:\t" << inbamname.chars() << std::endl;
+        std::cout << std::endl;
+        std::cout << "brrrm! Vacuuming BAM file debris" << std::endl;
+        std::cout << std::endl;
+        std::cout << "Identifying alignments for removal..." << std::endl;
     }
     
     int num_alignments = 0;
@@ -297,10 +299,10 @@ int main(int argc, char *argv[]) {
     auto duration_flagging = std::chrono::duration_cast<std::chrono::seconds>(end_flagging - start_flagging).count();
 
     if (verbose) {
-        std::cout << "Flagging alignments for removal completed in (seconds):\t" << duration_flagging << std::endl;
-        std::cout << "Number of alignments flagged for removal:\t" << num_removed_spliced << std::endl;
-        std::cout << "Number of spliced alignments:\t" << num_total_spliced << std::endl;
-        std::cout << "Total number of alignments seen while vacuuming:\t" << num_alignments << std::endl;
+        std::cout << "Alignment removal identification completed in: " << duration_flagging << " second(s)" << std::endl;
+        std::cout << "Alignments flagged for removal: " << num_removed_spliced << std::endl;
+        std::cout << "Spliced alignments identified: " << num_total_spliced << std::endl;
+        std::cout << "Total alignments processed: " << num_alignments << std::endl;
     }
 
 
@@ -317,8 +319,9 @@ int main(int argc, char *argv[]) {
     auto duration_vacuum = std::chrono::duration_cast<std::chrono::seconds>(end_vacuum - start_vacuum);
 
     if (verbose) {
-        std::cout << "Vacuuming completed in (seconds):\t" << duration_vacuum.count() << std::endl;
-        std::cout << "All clear! Your vacuumed BAM file is now optimized for further analysis." << std::endl;
+        std::cout << "Cleaning completed in: " << duration_vacuum.count() << " second(s)" << std::endl;
+        std::cout << std::endl;
+        std::cout << "Congratulations! Your vacuumed BAM file is now optimized for analysis." << std::endl;
     }
 }
 
@@ -366,6 +369,7 @@ void processOptions(int argc, char* argv[]) {
 
     verbose=(args.getOpt("verbose")!=NULL || args.getOpt('V')!=NULL);
     if (verbose) {
+        std::cout << std::endl;
         fprintf(stderr, "Running Vacuum " VERSION ". Command line:\n");
         args.printCmdLine(stderr);
     }
