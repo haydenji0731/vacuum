@@ -103,22 +103,6 @@ std::set<CJunc> loadBed(GStr inbedname) {
     return spur_juncs;
 }
 
-
-// void flushBrec(GVec<PBRec> &pbrecs) {
-//     if (pbrecs.Count()==0) return;
-//     for (int i=0; i < pbrecs.Count(); i++) {
-//         std::string kv = pbrecs[i].r->name();
-//         std::string tmp = std::to_string(pbrecs[i].r->pairOrder());
-//         kv += ";";
-//         kv += tmp;
-//         if (ht.find(kv) != ht.end()) {
-//             int new_nh = pbrecs[i].r->tag_int("NH", 0) - ht[kv];
-//             pbrecs[i].r->add_int_tag("NH", new_nh);
-//         }
-//         outfile->write(pbrecs[i].r);
-//     }
-// }
-
 bool check_identical_cigar(bam1_t* rec1, bam1_t* rec2) {
     if (rec1->core.n_cigar == rec2->core.n_cigar && 
         memcmp(bam_get_cigar(rec1), bam_get_cigar(rec2), rec1->core.n_cigar * sizeof(uint32_t)) == 0) {
@@ -148,10 +132,10 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
             continue;
         }
         
+        //check if the alignment needs to be removed
         std::tuple<std::string, std::string, int, int> key = std::make_tuple(brec.name(), brec.refName(), 
                                                             brec.get_b()->core.pos, brec.get_b()->core.mpos);
         auto it = removed_brecs.find(key);
-        
         if (it != removed_brecs.end()) {
             bool processed = false;
             for (PBRec* item : it->second) {
@@ -162,23 +146,23 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                     if (removed_outfile != NULL) {
                         removed_outfile -> write(item->r);
                     }
-                    continue;   
+                    continue;  //escape for loop
                 }
             } 
             if (processed) {
-                continue;
+                continue; //alignment found, skip to next brec
             }
         }
 
-
+        //write to outfile if alignment is not paired
         if (!brec.isPaired()) {
             outfile->write(&brec);
             continue;
         }
 
+        //check if the alignment is paired with a removed alignment
         std::tuple<std::string, std::string, int, int> mate_key = std::make_tuple(brec.name(), brec.refName(),
                                                                 brec.get_b()->core.mpos, brec.get_b()->core.pos);
-        
         auto it_rem = removed_brecs.find(mate_key);
         if (it_rem != removed_brecs.end()) {
             int num_rem = it_rem->second.size(); //count of mates that need to be unpaired or removed:
@@ -188,16 +172,16 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                 auto it_mts = mates_unpaired.find(mate_key);
                 int num_mts = it_mts->second; 
                 if (num_mts == num_rem) {
-                    update_flag = false;
-                }
-
-                //add mate_key to mates_unpaired:
-                if (mates_unpaired.find(mate_key) == mates_unpaired.end()) {
-                    mates_unpaired[mate_key] = 1;
+                    update_flag = false; //if all mates have been unpaired, do not update flag
                 } else {
-                    int val = mates_unpaired[mate_key];
-                    val++;
-                    mates_unpaired[mate_key] = val;
+                    //add mate_key to mates_unpaired:
+                    if (mates_unpaired.find(mate_key) == mates_unpaired.end()) {
+                        mates_unpaired[mate_key] = 1;
+                    } else {
+                        int val = mates_unpaired[mate_key];
+                        val++;
+                        mates_unpaired[mate_key] = val;
+                    }
                 }
             }
 
