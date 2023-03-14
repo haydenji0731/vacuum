@@ -158,19 +158,21 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                 bam1_t* in_rec = brec.get_b();
                 bam1_t* rm_rec = item->r->get_b();
                 if( check_identical_cigar(in_rec, rm_rec) ) { 
+                    processed = true;
                     if (removed_outfile != NULL) {
                         removed_outfile -> write(item->r);
-                        processed = true;
-                    }   
+                    }
+                    continue;   
                 }
             } 
             if (processed) {
                 continue;
-        }
+            }
         }
 
 
         if (!brec.isPaired()) {
+            outfile->write(&brec);
             continue;
         }
 
@@ -187,7 +189,6 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                 int num_mts = it_mts->second; 
                 if (num_mts == num_rem) {
                     update_flag = false;
-                    // break;
                 }
 
                 //add mate_key to mates_unpaired:
@@ -200,7 +201,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                 }
             }
 
-            if (remove_mate) {
+            if (update_flag && remove_mate) {
                 if (removed_outfile != NULL) {
                     removed_outfile->write(&brec);
                 }
