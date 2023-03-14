@@ -2,14 +2,14 @@
 #include <fstream>
 #include <vector>
 #include <string>
-#include "tmerge.h"
-#include <gclib/GArgs.h>
-#include <gclib/GVec.hh>
 #include <chrono>
-#include <unordered_map>
-#include <gclib/GHashMap.hh>
 #include <set>
 #include <tuple>
+#include <map>
+#include <unordered_map>
+#include <gclib/GArgs.h>
+#include <gclib/GStr.h>
+#include "GSam.h"
 
 #define VERSION "0.0.1"
 
@@ -36,10 +36,11 @@ GStr inbamname;
 GStr inbedname;
 GStr outfname;
 GStr outfname_removed;
-std::unordered_map<std::string, int> ht;
 GSamWriter* outfile=NULL;
 GSamWriter* removed_outfile=NULL;
 bool remove_mate=false;
+bool verbose=false;
+std::unordered_map<std::string, int> ht;
 
 struct CJunc {
     int start, end;
@@ -115,12 +116,12 @@ bool check_identical_cigar(bam1_t* rec1, bam1_t* rec2) {
 void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                  std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>>& removed_brecs) {
     
-    GSamReader reader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
+    GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
     GSamRecord brec;
     std::map<std::tuple<std::string, std::string, int, int>, int> mates_unpaired; //keep track of count of mates that are unpaired
 
     //iterate over bam and filter out spurious junctions
-    while (reader.next(brec)) {
+    while (bamreader.next(brec)) {
         if (brec.isUnmapped()) {
             continue;
         }
@@ -195,7 +196,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
             brec.add_int_tag("NH", new_nh);
         }
 
-            //update flag and tlen
+            //update flag, tlen, mpos
             if (update_flag) {
                 brec.get_b()->core.flag &= ~3;
                 brec.get_b()->core.isize = 0; //set template len to zero
@@ -207,16 +208,14 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
         outfile->write(&brec);
     }
     
-    //close the reader
-    reader.bclose();
+    //close the bamreader
+    bamreader.bclose();
 }
 
 
-std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>> removed_brecs;
-int spliced_alignments=0;
-bool verbose=false;
-
 int main(int argc, char *argv[]) {
+    std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>> removed_brecs;
+    int spliced_alignments=0;
     processOptions(argc, argv);
     std::set<CJunc> spur_juncs = loadBed(inbedname);
     GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
@@ -230,8 +229,8 @@ int main(int argc, char *argv[]) {
 
     auto start_vacuum=std::chrono::high_resolution_clock::now();
     if (verbose) {
-        std::cout << "Running vacuum on input bam file: " << inbamname.chars() << std::endl;
         std::cout << "brrrm! Flagging alignment records for removal" << std::endl;
+        std::cout << "Running vacuum on input bam file:\t" << inbamname.chars() << std::endl;
     }
     
     int num_alignments = 0;
@@ -372,6 +371,5 @@ void processOptions(int argc, char* argv[]) {
     }
 
     remove_mate=(args.getOpt("remove_mate")!=NULL);
-
 
 }
