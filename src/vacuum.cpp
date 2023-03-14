@@ -201,7 +201,9 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
             }
 
             if (remove_mate) {
-                removed_outfile->write(&brec);
+                if (removed_outfile != NULL) {
+                    removed_outfile->write(&brec);
+                }
                 continue;
             }
 
