@@ -116,19 +116,12 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                  std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>>& removed_brecs) {
     
     GSamReader reader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
-    GSamRecord prev_brec;
     GSamRecord brec;
-    std::tuple<std::string, std::string, int, int> prev_key;
-    std::map<std::tuple<std::string, std::string, int, int>, int> mates_unpaired;
+    std::map<std::tuple<std::string, std::string, int, int>, int> mates_unpaired; //keep track of count of mates that are unpaired
 
-    int align_cnt = 0;
-    int rec_unmapped = 0;
-
-
+    //iterate over bam and filter out spurious junctions
     while (reader.next(brec)) {
-        align_cnt++;
         if (brec.isUnmapped()) {
-            rec_unmapped++;
             continue;
         }
         
@@ -137,19 +130,19 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                                                             brec.get_b()->core.pos, brec.get_b()->core.mpos);
         auto it = removed_brecs.find(key);
         if (it != removed_brecs.end()) {
-            bool processed = false;
+            bool found = false;
             for (PBRec* item : it->second) {
                 bam1_t* in_rec = brec.get_b();
                 bam1_t* rm_rec = item->r->get_b();
                 if( check_identical_cigar(in_rec, rm_rec) ) { 
-                    processed = true;
+                    found = true;
                     if (removed_outfile != NULL) {
                         removed_outfile -> write(item->r);
                     }
-                    continue;  //escape for loop
+                    continue;  //escape for loop because alignment has been found
                 }
             } 
-            if (processed) {
+            if (found) {
                 continue; //alignment found, skip to next brec
             }
         }
@@ -174,7 +167,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                 if (num_mts == num_rem) {
                     update_flag = false; //if all mates have been unpaired, do not update flag
                 } else {
-                    //add mate_key to mates_unpaired:
+                    //add mate_key to mates_unpaired (to keep track of removed mates):
                     if (mates_unpaired.find(mate_key) == mates_unpaired.end()) {
                         mates_unpaired[mate_key] = 1;
                     } else {
@@ -184,7 +177,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                     }
                 }
             }
-
+            //write to outfile if remove_mate is true
             if (update_flag && remove_mate) {
                 if (removed_outfile != NULL) {
                     removed_outfile->write(&brec);
@@ -192,7 +185,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                 continue;
             }
 
-             //update NH tag:
+            //update NH tag:
             std::string kv = brec.name();
             std::string tmp = std::to_string(brec.pairOrder());
             kv += ";";
@@ -216,8 +209,6 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
     
     //close the reader
     reader.bclose();
-    std::cout << rec_unmapped << " unmapped records skipped" << std::endl;
-    std::cout << align_cnt << " records written to " << outfname << std::endl;
 }
 
 
@@ -237,47 +228,49 @@ int main(int argc, char *argv[]) {
         removed_outfile=new GSamWriter(outfname_removed, bamreader.header(), GSamFile_BAM);
     }
 
-    std::cout << "brrrm! identifying alignment records with spurious splice junctions" << std::endl;
-    auto start=std::chrono::high_resolution_clock::now();
-    int spur_cnt = 0;
-    int spliced_alignments = 0;
-    GSamRecord curr_brec;
-    GSamRecord prev_brec;
-    std::tuple<std::string, std::string, int, int> prev_key;
-    std::tuple<std::string, std::string, int, int> curr_key;
+    auto start_vacuum=std::chrono::high_resolution_clock::now();
+    if (verbose) {
+        std::cout << "Running vacuum on input bam file: " << inbamname.chars() << std::endl;
+        std::cout << "brrrm! Flagging alignment records for removal" << std::endl;
+    }
     
-    int align_cnt = 0;
+    int num_alignments = 0;
+    int num_removed_spliced = 0;
+    int num_total_spliced = 0;
+    GSamRecord brec;
+    std::tuple<std::string, std::string, int, int> key;
     
-    while (bamreader.next(curr_brec)) {
-        align_cnt++;
-        if (curr_brec.isUnmapped()) {
+    auto start_flagging=std::chrono::high_resolution_clock::now();
+    while (bamreader.next(brec)) {
+        num_alignments++;
+        if (brec.isUnmapped()) {
             continue;
         }
 
-        bam1_t* in_rec = curr_brec.get_b();
-        curr_key = std::make_tuple(curr_brec.name(), curr_brec.refName(), 
-                                    curr_brec.get_b()->core.pos, curr_brec.get_b()->core.mpos);
+        bam1_t* in_rec = brec.get_b();
+        key = std::make_tuple(brec.name(), brec.refName(), 
+                                    brec.get_b()->core.pos, brec.get_b()->core.mpos);
 
         bool spur = false;
-        if (curr_brec.exons.Count() > 1) {
-            spliced_alignments++;
-            const char* chr=curr_brec.refName();
-            char strand = curr_brec.spliceStrand();
-            for (int i = 1; i < curr_brec.exons.Count(); i++) {
-                CJunc j(curr_brec.exons[i-1].end, curr_brec.exons[i].start-1, strand, chr);
+        if (brec.exons.Count() > 1) {
+            num_total_spliced++;
+            const char* chr=brec.refName();
+            char strand = brec.spliceStrand();
+            for (int i = 1; i < brec.exons.Count(); i++) {
+                CJunc j(brec.exons[i-1].end, brec.exons[i].start-1, strand, chr);
                 if (spur_juncs.find(j) != spur_juncs.end()) {
                     spur = true;
                     break;
                 }
             }
             if (spur) {
-                spur_cnt++;
-                std::string kv = curr_brec.name();
-                std::string tmp = std::to_string(curr_brec.pairOrder());
+                num_removed_spliced++;
+                //add to hash table for NH tag:
+                std::string kv = brec.name();
+                std::string tmp = std::to_string(brec.pairOrder());
                 kv += ";";
                 kv += tmp;
-                // key not present
-                if (ht.find(kv) == ht.end()) {
+                if (ht.find(kv) == ht.end()) { // key not present
                     ht[kv] = 1;
                 } else {
                     int val = ht[kv];
@@ -286,14 +279,14 @@ int main(int argc, char *argv[]) {
                 }
 
                 //add spurs to removed_brecs:                
-                GSamRecord *rec = new GSamRecord(curr_brec);
+                GSamRecord *rec = new GSamRecord(brec);
                 PBRec *newpbr = new PBRec(rec);
-                if (removed_brecs.find(curr_key) == removed_brecs.end()) {
+                if (removed_brecs.find(key) == removed_brecs.end()) {
                     std::vector<PBRec*> v;
                     v.push_back(newpbr);
-                    removed_brecs[curr_key] = v;
+                    removed_brecs[key] = v;
                 } else {
-                    removed_brecs[curr_key].push_back(newpbr);
+                    removed_brecs[key].push_back(newpbr);
                 }
 
             }
@@ -301,26 +294,32 @@ int main(int argc, char *argv[]) {
     }
 
     bamreader.bclose();
-    std::cout << "vacuuming completed. writing only clean bam records to the output file." << std::endl;
-    std::cout << "Total number of alignments seen while vacuuming: " << align_cnt << std::endl;
+    auto end_flagging=std::chrono::high_resolution_clock::now();
+    auto duration_flagging = std::chrono::duration_cast<std::chrono::seconds>(end_flagging - start_flagging).count();
 
+    if (verbose) {
+        std::cout << "Flagging alignments for removal completed in (seconds):\t" << duration_flagging << std::endl;
+        std::cout << "Number of alignments flagged for removal:\t" << num_removed_spliced << std::endl;
+        std::cout << "Number of spliced alignments:\t" << num_total_spliced << std::endl;
+        std::cout << "Total number of alignments seen while vacuuming:\t" << num_alignments << std::endl;
+    }
+
+
+    auto begin_filtering=std::chrono::high_resolution_clock::now();
     filter_bam(outfile, removed_outfile, removed_brecs);
-    
+    auto end_filtering=std::chrono::high_resolution_clock::now();
     
     delete outfile;
     if (removed_outfile != NULL) {
         delete removed_outfile;
     }
-    auto end =std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
+
+    auto end_vacuum =std::chrono::high_resolution_clock::now();
+    auto duration_vacuum = std::chrono::duration_cast<std::chrono::seconds>(end_vacuum - start_vacuum);
 
     if (verbose) {
-        //print size of removed_brecs
-        std::cout << "Size of removed_brecs: " << removed_brecs.size() << std::endl;
-        std::cout << "Input bam file: " << inbamname.chars() << std::endl;
-        std::cout << "Count of spliced alignments: " << spliced_alignments << std::endl;
-        std::cout << spur_cnt << " spurious alignment records were removed." << std::endl;
-        std::cout << "Vacuuming completed in " << duration.count() << " seconds" << std::endl;
+        std::cout << "Vacuuming completed in (seconds):\t" << duration_vacuum.count() << std::endl;
+        std::cout << "All clear! Your vacuumed BAM file is now optimized for further analysis." << std::endl;
     }
 }
 
