@@ -41,9 +41,10 @@ GSamWriter* removed_outfile=NULL;
 bool remove_mate=false;
 bool verbose=false;
 std::unordered_map<std::string, int> ht;
-int num_mated_removed=0;
+int num_mates_removed=0;
 int num_spur_removed=0;
 int num_alns_output=0;
+int num_spur_alns_both_mates=0;
 
 struct CJunc {
     int start, end;
@@ -144,11 +145,11 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                     if (removed_outfile != NULL) {
                         removed_outfile -> write(item->r);
                     }
-                    continue;  //escape for loop because alignment has been found
+                    break;  //escape for loop because alignment has been found
                 }
-            } 
+            }
             if (found) {
-                continue; //alignment found, skip to next brec
+                continue; //resume while loop (otherwise will be written to outfile)
             }
         }
 
@@ -164,30 +165,23 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                                                                 brec.get_b()->core.mpos, brec.get_b()->core.pos);
         auto it_rem = removed_brecs.find(mate_key);
         if (it_rem != removed_brecs.end()) {
-            int num_rem = it_rem->second.size(); //count of mates that need to be unpaired or removed:
+            int num_rem = it_rem->second.size(); 
             bool update_flag = true;
+            //if more then 1 mate needs to be removed, check how many mates have already been unpaired:
             if (num_rem > 1) {
-                //check how many mates have already been unpaired:
-                auto it_mts = mates_unpaired.find(mate_key);
-                int num_mts = it_mts->second; 
+                int &num_mts = mates_unpaired[mate_key]; //if not seen, defaults to 0
                 if (num_mts == num_rem) {
-                    update_flag = false; //if all mates have been unpaired, do not update flag
+                    update_flag = false; // all mates have been unpaired
                 } else {
-                    //add mate_key to mates_unpaired (to keep track of removed mates):
-                    if (mates_unpaired.find(mate_key) == mates_unpaired.end()) {
-                        mates_unpaired[mate_key] = 1;
-                    } else {
-                        int val = mates_unpaired[mate_key];
-                        val++;
-                        mates_unpaired[mate_key] = val;
-                    }
-                }
+                    num_mts++;
+                } 
             }
-            //write to outfile if remove_mate is true
+
+            //write to removed_outfile if remove_mate is true
             if (update_flag && remove_mate) {
                 if (removed_outfile != NULL) {
                     removed_outfile->write(&brec);
-                    num_mated_removed++;
+                    num_mates_removed++;
                 }
                 continue;
             }
@@ -330,7 +324,7 @@ int main(int argc, char *argv[]) {
 
     if (verbose) {
         if (removed_outfile != NULL && remove_mate) {
-            std::cout << "Mates of spliced alignments removed: " << num_mated_removed << std::endl;
+            std::cout << "Mates of spliced alignments removed: " << num_mates_removed << std::endl;
         }
         std::cout << "Alignments written to output: " << num_alns_output << std::endl;
         std::cout << "Cleaning completed in: " << duration_vacuum.count() << " second(s)" << std::endl;
