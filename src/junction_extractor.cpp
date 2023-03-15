@@ -4,6 +4,7 @@
 #include <gclib/GStr.h>
 #include "tmerge.h"
 #include "commons.h"
+#include <chrono>
 
 #define VERSION "0.0.1"
 
@@ -86,7 +87,7 @@ void flushJuncs(FILE* f, const char* chr) {
 void processOptions(int argc, char* argv[]);
 
 int main(int argc, char*argv[]) {
-
+    auto start=std::chrono::high_resolution_clock::now();
     // ANSI Shadow
 	const char *banner = R"""(
      ██╗██╗   ██╗███╗   ██╗ ██████╗████████╗██╗ ██████╗ ███╗   ██╗    ███████╗██╗  ██╗████████╗██████╗  █████╗  ██████╗████████╗ ██████╗ ██████╗ 
@@ -96,10 +97,10 @@ int main(int argc, char*argv[]) {
 ╚█████╔╝╚██████╔╝██║ ╚████║╚██████╗   ██║   ██║╚██████╔╝██║ ╚████║    ███████╗██╔╝ ██╗   ██║   ██║  ██║██║  ██║╚██████╗   ██║   ╚██████╔╝██║  ██║
  ╚════╝  ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝    ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 	)""";
-    cout << banner << endl;
-
+    
     inRecords.setup(VERSION, argc, argv);
 	processOptions(argc, argv);
+    if (verbose) {cout << banner << endl;}
 	int numSamples=inRecords.start();
 	cout << "numSamples: " << numSamples << endl;
 	cout << "outfname  : " << outfname << endl;
@@ -116,7 +117,7 @@ int main(int argc, char*argv[]) {
         }
         outf = fopen(outfname.chars(), "w");
         if (outf==NULL) GError("Error creating file %s\n", outfname.chars());
-        fprintf(outf, "track name=junctions\n");
+        //fprintf(outf, "track name=junctions\n");
     }
 
 	/***************************
@@ -125,9 +126,8 @@ int main(int argc, char*argv[]) {
 	int counter = 0;
     int prev_tid=-1;
     char* prev_refname;
-    GVec<uint64_t> bcov(2048*1024);
-    std::vector<std::pair<float,uint64_t>> bsam(2048*1024,{0,1}); // number of samples. 1st - current average; 2nd - total number of values
-//    std::vector<std::set<int>> bsam_idx(2048*1024,std::set<int>{}); // for indexed runs
+    // GVec<uint64_t> bcov(2048*1024);
+    // std::vector<std::pair<float,uint64_t>> bsam(2048*1024,{0,1}); // number of samples. 1st - current average; 2nd - total number of values
     int b_end=0; //bundle start, end (1-based)
     int b_start=0; //1 based
 
@@ -151,7 +151,6 @@ int main(int argc, char*argv[]) {
         } else { //extending current bundle
             if (b_end<endpos) {
                 b_end=endpos;
-                bcov.setCount(b_end-b_start+1, (int)0);
             }
         }
         int accYC = 0;
@@ -163,6 +162,11 @@ int main(int argc, char*argv[]) {
 	}
     flushJuncs(outf, prev_refname);
     fclose(outf);
+    if (verbose){
+        auto end =std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
+        std::cout << "Junctions extracted in " << duration.count() << " seconds" << std::endl;
+    }
 }
 
 void processOptions(int argc, char* argv[]) {

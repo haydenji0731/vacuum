@@ -2,12 +2,14 @@
 #include <fstream>
 #include <vector>
 #include <string>
-#include "tmerge.h"
-#include <gclib/GArgs.h>
-#include <gclib/GVec.hh>
 #include <chrono>
+#include <set>
+#include <tuple>
+#include <map>
 #include <unordered_map>
-#include <gclib/GHashMap.hh>
+#include <gclib/GArgs.h>
+#include <gclib/GStr.h>
+#include "GSam.h"
 
 #define VERSION "0.0.1"
 
@@ -33,61 +35,47 @@ const char* USAGE="Vacuum v" VERSION "\n"
 GStr inbamname;
 GStr inbedname;
 GStr outfname;
+GStr outfname_removed;
 GSamWriter* outfile=NULL;
+GSamWriter* removed_outfile=NULL;
+bool remove_mate=false;
+bool verbose=false;
+std::unordered_map<std::string, int> ht;
+int num_mates_removed=0;
+int num_spur_removed=0;
+int num_alns_output=0;
+int num_spur_alns_both_mates=0;
 
 struct CJunc {
     int start, end;
-    char strand, chr;
-    CJunc(int vs=0, int ve=0, char vstrand='+', char vchr='1'):
+    char strand;
+    const char* chr;
+    CJunc(int vs=0, int ve=0, char vstrand='.', const char* vchr="*"):
             start(vs), end(ve), strand(vstrand), chr(vchr){ }
 
     // overload operators
     bool operator==(const CJunc& a) {
-        return (start==a.start && end==a.end && chr==a.chr);
+        return (start==a.start && end==a.end && strcmp(chr, a.chr) == 0);
     }
-    bool operator<(const CJunc& a) {
-        if (chr == a.chr) {
+
+    bool operator<(const CJunc& a) const {
+        int chr_cmp = strverscmp(chr, a.chr);
+        if (chr_cmp == 0) {
             if (start == a.start) {
-                return (end < a.end);
+                if (end == a.end) {
+                    return (strand < a.strand);
+                } else {
+                    return (end < a.end);
+                }
             } else {
                 return (start < a.start);
             }
         } else {
-            return (chr < a.chr);
+            return (chr_cmp < 0); //version order 
         }
     }
 };
 
-struct CRead {
-    char* read;
-    int pair, spurCnt;
-    CRead(int vp=0, const char* vr= (char*) "ERR", int vsc=1):
-            pair(vp), spurCnt(vsc){
-        read = (char *) malloc(strlen(vr) + 1);
-        strcpy(read, vr);
-    }
-
-    // overload operators
-    bool operator==(const CRead& a) {
-        return (pair == a.pair && !strcmp(read, a.read));
-    }
-
-    bool operator<(const CRead& a) {
-        if (!strcmp(read, a.read)) {
-            return (pair < a.pair);
-        } else {
-            return (strcmp(read, a.read) < 0);
-        }
-    }
-
-    void incSpurCnt() {
-        spurCnt++;
-    }
-
-    void clear() {
-        free(read);
-    }
-};
 
 struct PBRec {
     GSamRecord* r;
@@ -95,14 +83,14 @@ struct PBRec {
     r(rec){ }
 };
 
+
 void processOptions(int argc, char **argv);
 
-GArray<CJunc> spur_juncs;
-GVec<PBRec> kept_brecs;
 
-void loadBed(GStr inbedname) {
+std::set<CJunc> loadBed(GStr inbedname) {
     std::ifstream bed_f(inbedname);
     std::string line;
+    std::set<CJunc> spur_juncs;
     while (getline(bed_f, line)) {
         GStr gline = line.c_str();
         GVec<GStr> junc;
@@ -113,120 +101,240 @@ void loadBed(GStr inbedname) {
             gline=tmp;
             cnt++;
         }
-        char* chrname =junc[0].detach();
-        char chr = chrname[strlen(chrname) - 1];
+        const char* chr =junc[0].detach();
         CJunc j(junc[1].asInt(), junc[2].asInt(), *junc[5].detach(), chr);
-        spur_juncs.Add(j);
+        spur_juncs.insert(j);
     }
+    return spur_juncs;
 }
 
-// slower solution involves GArray
-//GArray<CRead> spur_reads(true);
-// settled with unordered map (i.e., hash table)
-std::unordered_map<std::string, int> ht;
-
-void flushBrec(GVec<PBRec> &pbrecs) {
-    if (pbrecs.Count()==0) return;
-    for (int i=0; i < pbrecs.Count(); i++) {
-        std::string kv = pbrecs[i].r->name();
-        std::string tmp = std::to_string(pbrecs[i].r->pairOrder());
-        kv += ";";
-        kv += tmp;
-        if (ht.find(kv) != ht.end()) {
-            int new_nh = pbrecs[i].r->tag_int("NH", 0) - ht[kv];
-            pbrecs[i].r->add_int_tag("NH", new_nh);
+bool check_identical_cigar(bam1_t* rec1, bam1_t* rec2) {
+    if (rec1->core.n_cigar == rec2->core.n_cigar && 
+        memcmp(bam_get_cigar(rec1), bam_get_cigar(rec2), rec1->core.n_cigar * sizeof(uint32_t)) == 0) {
+            return true;
         }
-// using GArray
-//        CRead tmp(pbrecs[i].r->pairOrder(), pbrecs[i].r->name());
-//        int idx;
-//        if (spur_reads.Found(tmp, idx)) {
-//            int new_nh = pbrecs[i].r->tag_int("NH", 0) - spur_reads[idx].spurCnt;
-//            pbrecs[i].r->add_int_tag("NH", new_nh);
-//        }
-// for testing
-//        if (!strcmp(pbrecs[i].r->name(), "ERR188044.24337229")) {
-//            std::cout << pbrecs[i].r->tag_int("NH", 0) << std::endl;
-//        }
-        outfile->write(pbrecs[i].r);
-    }
+    return false;
 }
 
-int main(int argc, char *argv[]) {
-    processOptions(argc, argv);
-    loadBed(inbedname);
+
+void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
+                 std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>>& removed_brecs) {
+    
     GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
-    outfile=new GSamWriter(outfname, bamreader.header(), GSamFile_BAM);
     GSamRecord brec;
-    auto start=std::chrono::high_resolution_clock::now();
-    int spur_cnt = 0;
-    std::cout << "brrrm! identifying alignment records with spurious splice junctions" << std::endl;
+    std::map<std::tuple<std::string, std::string, int, int>, int> mates_unpaired; //keep track of count of mates that are unpaired
+
+    //iterate over bam and filter out spurious junctions
     while (bamreader.next(brec)) {
-        bam1_t* in_rec = brec.get_b();
-        // check if current record is unaligned;
-        int flag = in_rec->core.flag;
-        int unmapped = 4;
-        if ((flag & unmapped) == unmapped) {
+        if (brec.isUnmapped()) {
             continue;
         }
+        
+        //check if the alignment needs to be removed
+        std::tuple<std::string, std::string, int, int> key = std::make_tuple(brec.name(), brec.refName(), 
+                                                            brec.get_b()->core.pos, brec.get_b()->core.mpos);
+        auto it = removed_brecs.find(key);
+        if (it != removed_brecs.end()) {
+            bool found = false;
+            for (PBRec* item : it->second) {
+                bam1_t* in_rec = brec.get_b();
+                bam1_t* rm_rec = item->r->get_b();
+                if( check_identical_cigar(in_rec, rm_rec) ) { 
+                    found = true;
+                    num_spur_removed++;
+                    if (removed_outfile != NULL) {
+                        removed_outfile -> write(item->r);
+                    }
+                    break;  //escape for loop because alignment has been found
+                }
+            }
+            if (found) {
+                continue; //resume while loop (otherwise will be written to outfile)
+            }
+        }
+
+        //write to outfile if alignment is not paired
+        if (!brec.isPaired()) {
+            outfile->write(&brec);
+            num_alns_output++;
+            continue;
+        }
+
+        //check if the alignment is paired with a removed alignment
+        std::tuple<std::string, std::string, int, int> mate_key = std::make_tuple(brec.name(), brec.refName(),
+                                                                brec.get_b()->core.mpos, brec.get_b()->core.pos);
+        auto it_rem = removed_brecs.find(mate_key);
+        if (it_rem != removed_brecs.end()) {
+            int num_rem = it_rem->second.size(); 
+            bool update_flag = true;
+            //if more then 1 mate needs to be removed, check how many mates have already been unpaired:
+            if (num_rem > 1) {
+                int &num_mts = mates_unpaired[mate_key]; //if not seen, defaults to 0
+                if (num_mts == num_rem) {
+                    update_flag = false; // all mates have been unpaired
+                } else {
+                    num_mts++;
+                } 
+            }
+
+            //write to removed_outfile if remove_mate is true
+            if (update_flag && remove_mate) {
+                if (removed_outfile != NULL) {
+                    removed_outfile->write(&brec);
+                    num_mates_removed++;
+                }
+                continue;
+            }
+
+            //update NH tag:
+            std::string kv = brec.name();
+            std::string tmp = std::to_string(brec.pairOrder());
+            kv += ";";
+            kv += tmp;
+            if (ht.find(kv) != ht.end()) {
+            int new_nh = brec.tag_int("NH", 0) - ht[kv];
+            brec.add_int_tag("NH", new_nh);
+        }
+
+            //update flag, tlen, mpos
+            if (update_flag) {
+                brec.get_b()->core.flag &= ~3;
+                brec.get_b()->core.isize = 0; //set template len to zero
+                brec.get_b()->core.mpos =  brec.get_b()->core.pos; //set mate pos to pos 
+            }
+        }
+        
+        //write to outfile:
+        outfile->write(&brec);
+        num_alns_output++;
+    }
+    
+    //close the bamreader
+    bamreader.bclose();
+}
+
+
+int main(int argc, char *argv[]) {
+    std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>> removed_brecs;
+    int spliced_alignments=0;
+    processOptions(argc, argv);
+    std::set<CJunc> spur_juncs = loadBed(inbedname);
+    GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
+    outfile=new GSamWriter(outfname, bamreader.header(), GSamFile_BAM);
+
+    if (outfname_removed.is_empty()) {
+        removed_outfile = NULL;
+    } else {
+        removed_outfile=new GSamWriter(outfname_removed, bamreader.header(), GSamFile_BAM);
+    }
+
+    auto start_vacuum=std::chrono::high_resolution_clock::now();
+    if (verbose) {
+        std::cout << std::endl;
+        std::cout << "brrrm! Vacuuming BAM file debris" << std::endl;
+        std::cout << std::endl;
+        std::cout << "Identifying alignments for removal..." << std::endl;
+    }
+    
+    int num_alignments = 0;
+    int num_removed_spliced = 0;
+    int num_total_spliced = 0;
+    int num_unmapped = 0;
+    GSamRecord brec;
+    std::tuple<std::string, std::string, int, int> key;
+    
+    auto start_flagging=std::chrono::high_resolution_clock::now();
+    while (bamreader.next(brec)) {
+        num_alignments++;
+        if (brec.isUnmapped()) {
+            num_unmapped++;
+            continue;
+        }
+
+        bam1_t* in_rec = brec.get_b();
+        key = std::make_tuple(brec.name(), brec.refName(), 
+                                    brec.get_b()->core.pos, brec.get_b()->core.mpos);
+
+        bool spur = false;
         if (brec.exons.Count() > 1) {
-            const char* chrname=brec.refName();
-            char chr = chrname[strlen(chrname) - 1];
+            num_total_spliced++;
+            const char* chr=brec.refName();
             char strand = brec.spliceStrand();
-            bool spur = false;
             for (int i = 1; i < brec.exons.Count(); i++) {
                 CJunc j(brec.exons[i-1].end, brec.exons[i].start-1, strand, chr);
-                if (spur_juncs.Exists(j)) {
+                if (spur_juncs.find(j) != spur_juncs.end()) {
                     spur = true;
                     break;
                 }
             }
-            if (!spur) {
-                GSamRecord *rec = new GSamRecord(brec);
-                PBRec *newpbr = new PBRec(rec);
-                kept_brecs.Add(newpbr);
-            } else {
-                spur_cnt++;
+            if (spur) {
+                num_removed_spliced++;
+                //add to hash table for NH tag:
                 std::string kv = brec.name();
                 std::string tmp = std::to_string(brec.pairOrder());
                 kv += ";";
                 kv += tmp;
-                // key not present
-                if (ht.find(kv) == ht.end()) {
+                if (ht.find(kv) == ht.end()) { // key not present
                     ht[kv] = 1;
                 } else {
                     int val = ht[kv];
                     val++;
                     ht[kv] = val;
                 }
+
+                //add spurs to removed_brecs:                
+                GSamRecord *rec = new GSamRecord(brec);
+                PBRec *newpbr = new PBRec(rec);
+                if (removed_brecs.find(key) == removed_brecs.end()) {
+                    std::vector<PBRec*> v;
+                    v.push_back(newpbr);
+                    removed_brecs[key] = v;
+                } else {
+                    removed_brecs[key].push_back(newpbr);
+                }
+
             }
-// using GArray
-//            } else {
-//                CRead cr(brec.pairOrder(), brec.name());
-//                int idx;
-//                if (spur_reads.Found(cr, idx)) {
-//                    spur_reads[idx].incSpurCnt();
-//                } else {
-//                    spur_reads.Add(cr);
-//                }
-//            }
-        } else {
-            GSamRecord *rec = new GSamRecord(brec);
-            PBRec* newpbr = new PBRec(rec);
-            kept_brecs.Add(newpbr);
-        }
+        } 
     }
-    std::cout << "vacuuming completed. writing only clean bam records to the output file." << std::endl;
-    flushBrec(kept_brecs);
+
     bamreader.bclose();
+    auto end_flagging=std::chrono::high_resolution_clock::now();
+    auto duration_flagging = std::chrono::duration_cast<std::chrono::seconds>(end_flagging - start_flagging).count();
+
+    if (verbose) {
+        std::cout << "Alignment removal identification completed in: " << duration_flagging << " second(s)" << std::endl;
+        std::cout << "Total alignments processed: " << num_alignments << std::endl;
+        std::cout << "Unmapped alignments: " << num_unmapped << std::endl;
+        std::cout << "Spliced alignments identified: " << num_total_spliced << std::endl;
+        std::cout << "Alignments flagged for removal: " << num_removed_spliced << std::endl;
+    }
+
+
+    auto begin_filtering=std::chrono::high_resolution_clock::now();
+    filter_bam(outfile, removed_outfile, removed_brecs);
+    auto end_filtering=std::chrono::high_resolution_clock::now();
+    
     delete outfile;
-    auto end =std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
-    std::cout << spur_cnt << " spurious alignment records were removed." << std::endl;
-    std::cout << "Vacuuming completed in " << duration.count() << " seconds" << std::endl;
+    if (removed_outfile != NULL) {
+        delete removed_outfile;
+    }
+
+    auto end_vacuum =std::chrono::high_resolution_clock::now();
+    auto duration_vacuum = std::chrono::duration_cast<std::chrono::seconds>(end_vacuum - start_vacuum);
+
+    if (verbose) {
+        if (removed_outfile != NULL && remove_mate) {
+            std::cout << "Mates of spliced alignments removed: " << num_mates_removed << std::endl;
+        }
+        std::cout << "Alignments written to output: " << num_alns_output << std::endl;
+        std::cout << "Cleaning completed in: " << duration_vacuum.count() << " second(s)" << std::endl;
+        std::cout << std::endl;
+        std::cout << "Congratulations! Your vacuumed BAM file is now optimized for analysis." << std::endl;
+    }
 }
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;version;SMLPEDVho:");
+    GArgs args(argc, argv, "help;verbose;version;remove_mate;SMLPEDVho:r:");
     args.printError(USAGE, true);
 
     if (args.getOpt('h') || args.getOpt("help")) {
@@ -264,4 +372,16 @@ void processOptions(int argc, char* argv[]) {
         GMessage("\nError: output filename must be provided.");
         exit(1);
     }
+
+    outfname_removed=args.getOpt('r');
+
+    verbose=(args.getOpt("verbose")!=NULL || args.getOpt('V')!=NULL);
+    if (verbose) {
+        std::cout << std::endl;
+        fprintf(stderr, "Running Vacuum " VERSION ". Command line:\n");
+        args.printCmdLine(stderr);
+    }
+
+    remove_mate=(args.getOpt("remove_mate")!=NULL);
+
 }
