@@ -177,11 +177,14 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                 } 
             }
 
+            if (update_flag) {
+                num_mates_removed++;
+            }
+
             //write to removed_outfile if remove_mate is true
             if (update_flag && remove_mate) {
                 if (removed_outfile != NULL) {
                     removed_outfile->write(&brec);
-                    num_mates_removed++;
                 }
                 continue;
             }
@@ -231,8 +234,7 @@ int main(int argc, char *argv[]) {
     auto start_vacuum=std::chrono::high_resolution_clock::now();
     if (verbose) {
         std::cout << std::endl;
-        std::cout << "brrrm! Vacuuming BAM file debris" << std::endl;
-        std::cout << std::endl;
+        std::cout << "brrrm! Vacuuming BAM file debris in: " << inbamname << std::endl;
         std::cout << "Identifying alignments for removal..." << std::endl;
     }
     
@@ -323,12 +325,15 @@ int main(int argc, char *argv[]) {
     auto duration_vacuum = std::chrono::duration_cast<std::chrono::seconds>(end_vacuum - start_vacuum);
 
     if (verbose) {
-        if (removed_outfile != NULL && remove_mate) {
-            std::cout << "Mates of spliced alignments removed: " << num_mates_removed << std::endl;
+        if (remove_mate) {
+            if (removed_outfile != NULL) {
+                std::cout << "Mates of spliced alignments removed: " << num_mates_removed << std::endl;
+            }
+            else {
+                std::cout << "Mates of spliced alignments unpaired: " << num_mates_removed << std::endl;}
         }
         std::cout << "Alignments written to output: " << num_alns_output << std::endl;
         std::cout << "Cleaning completed in: " << duration_vacuum.count() << " second(s)" << std::endl;
-        std::cout << std::endl;
         std::cout << "Congratulations! Your vacuumed BAM file is now optimized for analysis." << std::endl;
     }
 }
