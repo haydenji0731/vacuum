@@ -233,7 +233,6 @@ int main(int argc, char *argv[]) {
     if (verbose) {
         std::cout << std::endl;
         std::cout << "brrrm! Vacuuming BAM file debris in: " << inbamname << std::endl;
-        std::cout << "brrrm! Vacuuming BAM file debris" << std::endl;
         std::cout << std::endl;
     }
     
