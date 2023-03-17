@@ -168,11 +168,11 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
             int num_rem = it_rem->second.size(); 
             bool update_flag = true;
             //if more then 1 mate needs to be removed, check how many mates have already been unpaired:
-            int &num_mts = mates_unpaired[mate_key]; //if not seen, defaults to 0
-            if (num_mts == num_rem) {
+            int &num_mts_seen = mates_unpaired[mate_key]; //if not seen, defaults to 0
+            if (num_mts_seen == num_rem) {
                 update_flag = false; // all mates have been unpaired
             } else {
-                num_mts++;
+                num_mts_seen++;
                 }     
 
             if (update_flag) {
