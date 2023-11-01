@@ -59,7 +59,7 @@ struct CJunc {
     }
 
     bool operator<(const CJunc& a) const {
-        int chr_cmp = strverscmp(chr, a.chr);
+        int chr_cmp = strcmp(chr, a.chr);
         if (chr_cmp == 0) {
             if (start == a.start) {
                 if (end == a.end) {
@@ -71,7 +71,7 @@ struct CJunc {
                 return (start < a.start);
             }
         } else {
-            return (chr_cmp < 0); //version order 
+            return (chr_cmp < 0); 
         }
     }
 };
