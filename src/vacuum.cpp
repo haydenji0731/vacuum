@@ -54,7 +54,7 @@ struct CJunc {
             start(vs), end(ve), strand(vstrand), chr(vchr){ }
 
     // overload operators
-    bool operator==(const CJunc& a) {
+    bool operator==(const CJunc& a) const {
         return (start==a.start && end==a.end && strcmp(chr, a.chr) == 0);
     }
 
