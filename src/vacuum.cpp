@@ -3,7 +3,7 @@
 #include <vector>
 #include <string>
 #include <chrono>
-#include <set>
+#include <unordered_set>
 #include <tuple>
 #include <map>
 #include <unordered_map>
@@ -76,6 +76,36 @@ struct CJunc {
     }
 };
 
+namespace std {
+    template<>
+    struct hash<CJunc> {
+        std::size_t operator()(const CJunc& cj) const {
+            std::hash<int> int_hasher;
+            std::hash<char> char_hasher;
+            std::size_t hash = 17;
+
+            // Hashing start
+            hash = hash * 31 + int_hasher(cj.start);
+
+            // Hashing end
+            hash = hash * 31 + int_hasher(cj.end);
+
+            // Hashing strand
+            hash = hash * 31 + char_hasher(cj.strand);
+
+            // Hashing chr
+            const char* chr_ptr = cj.chr;
+            std::size_t str_hash = 0;
+            while (*chr_ptr) {
+                str_hash = str_hash * 31 + char_hasher(*chr_ptr);
+                ++chr_ptr;
+            }
+            hash = hash * 31 + str_hash;
+
+            return hash;
+        }
+    };
+}
 
 struct PBRec {
     GSamRecord* r;
@@ -87,10 +117,10 @@ struct PBRec {
 void processOptions(int argc, char **argv);
 
 
-std::set<CJunc> loadBed(GStr inbedname) {
+std::unordered_set<CJunc> loadBed(GStr inbedname) {
     std::ifstream bed_f(inbedname);
     std::string line;
-    std::set<CJunc> spur_juncs;
+    std::unordered_set<CJunc> spur_juncs;
     while (getline(bed_f, line)) {
         GStr gline = line.c_str();
         GVec<GStr> junc;
@@ -219,7 +249,7 @@ int main(int argc, char *argv[]) {
     std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>> removed_brecs;
     int spliced_alignments=0;
     processOptions(argc, argv);
-    std::set<CJunc> spur_juncs = loadBed(inbedname);
+    std::unordered_set<CJunc> spur_juncs = loadBed(inbedname);
     GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
     outfile=new GSamWriter(outfname, bamreader.header(), GSamFile_BAM);
 
