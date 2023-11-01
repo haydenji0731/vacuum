@@ -15,22 +15,26 @@
 
 const char* USAGE="Vacuum v" VERSION "\n"
                   "==================\n"
-                  "The Vacuum utility can take a BAM file and a BED file containing coordinates of spurious junctions.\n"
-                  "Junctions of a spliced read are compared against the spurious junctions in the input BED file.\n"
+                  "The Vacuum utility filters out spurious spliced alignments from SAM/BAM/CRAM files.\n"
+                  "Junctions in a spliced alignment are compared against the spurious junctions in the input BED file.\n"
                   "If a BAM record contains >= 1 spurious junctions, then it is removed.\n"
                   "==================\n"
                   "\n"
-                  " usage: ./vacuum [-o BAM output file] input.BAM input.BED\n"
+                  "Usage: ./vacuum [options] input.[SAM|BAM|CRAM] input.BED\n"
                   "\n"
-                  " Input arguments (required): \n"
-                  "  input.BAM\t\talignment file in SAM/BAM/CRAM format\n"
-                  "  input.BED\t\tlist of spurious junctions in BED format\n"
-                  "       "
+                  "Input arguments (required):\n"
+                  "  input.[SAM|BAM|CRAM]   Alignment file in SAM/BAM/CRAM format.\n"
+                  "  input.BED              List of spurious junctions in BED format.\n"
                   "\n"
-                  " Optional arguments (-o must be specified):\n"
-                  "  -h,--help\tShow this help message and exit\n"
-                  "  --version\tShow program version and exit\n"
-                  "  -o\tFile for BAM output\n";
+                  "Optional arguments:\n"
+                  "  -h,--help              Show this help message and exit.\n"
+                  "  --version              Show program version and exit.\n"
+                  "  -o                     File for output in BAM/CRAM format. Must be specified.\n"
+                  "  -r                     File for removed alignments in BAM format.\n"
+                  "  --ref                  Reference genome file for CRAM input.\n"
+                  "  --remove_mate          If provided, removes the mate of a spurious read. If not, the mate is unpaired but not removed.\n"
+                  "  -V,--verbose           Verbose output.\n";
+
 
 GStr inbamname;
 GStr inbedname;
