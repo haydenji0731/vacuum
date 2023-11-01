@@ -36,6 +36,7 @@ GStr inbamname;
 GStr inbedname;
 GStr outfname;
 GStr outfname_removed;
+GStr cram_ref; //for cram files
 GSamWriter* outfile=NULL;
 GSamWriter* removed_outfile=NULL;
 bool remove_mate=false;
@@ -148,14 +149,14 @@ bool check_identical_cigar(bam1_t* rec1, bam1_t* rec2) {
 
 
 void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
-                 std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>>& removed_brecs) {
+                 std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>>& removed_brecs,
+                 GSamReader* bamreader) {
     
-    GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
     GSamRecord brec;
     std::map<std::tuple<std::string, std::string, int, int>, int> mates_unpaired; //keep track of count of mates that are unpaired
 
     //iterate over bam and filter out spurious junctions
-    while (bamreader.next(brec)) {
+    while (bamreader->next(brec)) {
         if (brec.isUnmapped()) {
             continue;
         }
@@ -239,9 +240,6 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
         outfile->write(&brec);
         num_alns_output++;
     }
-    
-    //close the bamreader
-    bamreader.bclose();
 }
 
 
@@ -250,13 +248,28 @@ int main(int argc, char *argv[]) {
     int spliced_alignments=0;
     processOptions(argc, argv);
     std::unordered_set<CJunc> spur_juncs = loadBed(inbedname);
-    GSamReader bamreader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
-    outfile=new GSamWriter(outfname, bamreader.header(), GSamFile_BAM);
+
+    GSamReader* bamreader;
+
+    if (inbamname.endsWith(".cram") && !cram_ref.is_empty()) {
+        // Initialize for CRAM file with user-specified reference genome
+        bamreader = new GSamReader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX, cram_ref);
+    } else {
+        // Initialize for BAM file or CRAM file with header-specified reference genome
+        bamreader = new GSamReader(inbamname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
+    }
+
+    if (outfname.endsWith(".cram")) {
+        outfile = new GSamWriter(outfname.chars(), bamreader->header(), GSamFile_CRAM);
+    } else {
+        outfile = new GSamWriter(outfname.chars(), bamreader->header(), GSamFile_BAM);
+    }
+
 
     if (outfname_removed.is_empty()) {
         removed_outfile = NULL;
     } else {
-        removed_outfile=new GSamWriter(outfname_removed, bamreader.header(), GSamFile_BAM);
+        removed_outfile=new GSamWriter(outfname_removed, bamreader->header(), GSamFile_BAM);
     }
 
     auto start_vacuum=std::chrono::high_resolution_clock::now();
@@ -274,7 +287,7 @@ int main(int argc, char *argv[]) {
     std::tuple<std::string, std::string, int, int> key;
     
     auto start_flagging=std::chrono::high_resolution_clock::now();
-    while (bamreader.next(brec)) {
+    while (bamreader->next(brec)) {
         num_alignments++;
         if (brec.isUnmapped()) {
             num_unmapped++;
@@ -327,7 +340,7 @@ int main(int argc, char *argv[]) {
         } 
     }
 
-    bamreader.bclose();
+    bamreader->rewind();
     auto end_flagging=std::chrono::high_resolution_clock::now();
     auto duration_flagging = std::chrono::duration_cast<std::chrono::seconds>(end_flagging - start_flagging).count();
 
@@ -341,7 +354,7 @@ int main(int argc, char *argv[]) {
 
 
     auto begin_filtering=std::chrono::high_resolution_clock::now();
-    filter_bam(outfile, removed_outfile, removed_brecs);
+    filter_bam(outfile, removed_outfile, removed_brecs, bamreader);
     auto end_filtering=std::chrono::high_resolution_clock::now();
     
     delete outfile;
@@ -367,8 +380,11 @@ int main(int argc, char *argv[]) {
 }
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;verbose;version;remove_mate;SMLPEDVho:r:");
+    GArgs args(argc, argv, "help;verbose;version;remove_mate;ref=;SMLPEDVho:r:");
     args.printError(USAGE, true);
+    
+    cram_ref = args.getOpt("ref");
+    std::cout << "Captured --ref: " << args.getOpt("ref") << std::endl;
 
     if (args.getOpt('h') || args.getOpt("help")) {
         fprintf(stdout,"%s",USAGE);
