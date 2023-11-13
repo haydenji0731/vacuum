@@ -12,7 +12,7 @@ ExternalProject_Add(htslib
         # if this is not specified, need to include the packages manually
         GIT_REPOSITORY https://github.com/samtools/htslib.git
         BUILD_IN_SOURCE 1
-        CONFIGURE_COMMAND autoheader COMMAND autoreconf -i COMMAND ./configure --without-libdeflate --disable-libcurl --disable-lzma
+        CONFIGURE_COMMAND autoreconf -i COMMAND ./configure --without-libdeflate --disable-libcurl --disable-lzma
         BUILD_COMMAND ${MAKE}
         INSTALL_COMMAND ""
         )
