@@ -3,7 +3,7 @@ project(vacuum)
 
 set(CMAKE_CXX_STANDARD 11)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_sCXX_FLAGS} -fpermissive -DNOCURL=1")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fpermissive -DNOCURL=1")
 include_directories("${CMAKE_SOURCE_DIR}/include/")
 link_directories("${CMAKE_SOURCE_DIR}/include/htslib")
 include(ExternalProject)
@@ -12,7 +12,7 @@ ExternalProject_Add(htslib
         # if this is not specified, need to include the packages manually
         GIT_REPOSITORY https://github.com/samtools/htslib.git
         BUILD_IN_SOURCE 1
-        CONFIGURE_COMMAND autoheader COMMAND autoconf COMMAND ./configure --without-libdeflate --disable-libcurl --disable-lzma
+        CONFIGURE_COMMAND autoheader COMMAND autoreconf -i COMMAND ./configure --without-libdeflate --disable-libcurl --disable-lzma
         BUILD_COMMAND ${MAKE}
         INSTALL_COMMAND ""
         )
