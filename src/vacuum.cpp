@@ -76,7 +76,7 @@ struct CJunc {
                 return (start < a.start);
             }
         } else {
-            return (chr_cmp < 0); 
+            return (chr_cmp < 0);
         }
     }
 };
@@ -144,7 +144,7 @@ std::unordered_set<CJunc> loadBed(GStr inbedname) {
 }
 
 bool check_identical_cigar(bam1_t* rec1, bam1_t* rec2) {
-    if (rec1->core.n_cigar == rec2->core.n_cigar && 
+    if (rec1->core.n_cigar == rec2->core.n_cigar &&
         memcmp(bam_get_cigar(rec1), bam_get_cigar(rec2), rec1->core.n_cigar * sizeof(uint32_t)) == 0) {
             return true;
         }
@@ -155,7 +155,7 @@ bool check_identical_cigar(bam1_t* rec1, bam1_t* rec2) {
 void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                  std::map<std::tuple<std::string, std::string, int, int>, std::vector<PBRec*>>& removed_brecs,
                  GSamReader* bamreader) {
-    
+
     GSamRecord brec;
     std::map<std::tuple<std::string, std::string, int, int>, int> mates_unpaired; //keep track of count of mates that are unpaired
 
@@ -164,9 +164,9 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
         if (brec.isUnmapped()) {
             continue;
         }
-        
+
         //check if the alignment needs to be removed
-        std::tuple<std::string, std::string, int, int> key = std::make_tuple(brec.name(), brec.refName(), 
+        std::tuple<std::string, std::string, int, int> key = std::make_tuple(brec.name(), brec.refName(),
                                                             brec.get_b()->core.pos, brec.get_b()->core.mpos);
         auto it = removed_brecs.find(key);
         if (it != removed_brecs.end()) {
@@ -174,7 +174,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
             for (PBRec* item : it->second) {
                 bam1_t* in_rec = brec.get_b();
                 bam1_t* rm_rec = item->r->get_b();
-                if( check_identical_cigar(in_rec, rm_rec) ) { 
+                if( check_identical_cigar(in_rec, rm_rec) ) {
                     found = true;
                     num_spur_removed++;
                     if (removed_outfile != NULL) {
@@ -200,7 +200,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                                                                 brec.get_b()->core.mpos, brec.get_b()->core.pos);
         auto it_rem = removed_brecs.find(mate_key);
         if (it_rem != removed_brecs.end()) {
-            int num_rem = it_rem->second.size(); 
+            int num_rem = it_rem->second.size();
             bool update_flag = true;
             //if more then 1 mate needs to be removed, check how many mates have already been unpaired:
             int &num_mts_seen = mates_unpaired[mate_key]; //if not seen, defaults to 0
@@ -208,7 +208,7 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
                 update_flag = false; // all mates have been unpaired
             } else {
                 num_mts_seen++;
-                }     
+                }
 
             if (update_flag) {
                 num_mates++;
@@ -236,10 +236,10 @@ void filter_bam(GSamWriter* outfile, GSamWriter* removed_outfile,
             if (update_flag) {
                 brec.get_b()->core.flag &= ~3;
                 brec.get_b()->core.isize = 0; //set template len to zero
-                brec.get_b()->core.mpos =  brec.get_b()->core.pos; //set mate pos to pos 
+                brec.get_b()->core.mpos =  brec.get_b()->core.pos; //set mate pos to pos
             }
         }
-        
+
         //write to outfile:
         outfile->write(&brec);
         num_alns_output++;
@@ -282,14 +282,14 @@ int main(int argc, char *argv[]) {
         std::cout << "brrrm! Vacuuming BAM file debris in: " << inbamname << std::endl;
         std::cout << std::endl;
     }
-    
+
     int num_alignments = 0;
     int num_removed_spliced = 0;
     int num_total_spliced = 0;
     int num_unmapped = 0;
     GSamRecord brec;
     std::tuple<std::string, std::string, int, int> key;
-    
+
     auto start_flagging=std::chrono::high_resolution_clock::now();
     while (bamreader->next(brec)) {
         num_alignments++;
@@ -299,7 +299,7 @@ int main(int argc, char *argv[]) {
         }
 
         bam1_t* in_rec = brec.get_b();
-        key = std::make_tuple(brec.name(), brec.refName(), 
+        key = std::make_tuple(brec.name(), brec.refName(),
                                     brec.get_b()->core.pos, brec.get_b()->core.mpos);
 
         bool spur = false;
@@ -329,7 +329,7 @@ int main(int argc, char *argv[]) {
                     ht[kv] = val;
                 }
 
-                //add spurs to removed_brecs:                
+                //add spurs to removed_brecs:
                 GSamRecord *rec = new GSamRecord(brec);
                 PBRec *newpbr = new PBRec(rec);
                 if (removed_brecs.find(key) == removed_brecs.end()) {
@@ -341,7 +341,7 @@ int main(int argc, char *argv[]) {
                 }
 
             }
-        } 
+        }
     }
 
     bamreader->rewind();
@@ -360,7 +360,7 @@ int main(int argc, char *argv[]) {
     auto begin_filtering=std::chrono::high_resolution_clock::now();
     filter_bam(outfile, removed_outfile, removed_brecs, bamreader);
     auto end_filtering=std::chrono::high_resolution_clock::now();
-    
+
     delete outfile;
     if (removed_outfile != NULL) {
         delete removed_outfile;
@@ -386,9 +386,13 @@ int main(int argc, char *argv[]) {
 void processOptions(int argc, char* argv[]) {
     GArgs args(argc, argv, "help;verbose;version;remove_mate;ref=;SMLPEDVho:r:");
     args.printError(USAGE, true);
-    
-    cram_ref = args.getOpt("ref");
-    std::cout << "Captured --ref: " << args.getOpt("ref") << std::endl;
+
+    verbose = (args.getOpt("verbose")!= NULL || args.getOpt('V')!= NULL);
+
+    if (args.getOpt("ref") && verbose) {
+        cram_ref = args.getOpt("ref");
+        std::cout << "Captured --ref: " << cram_ref << std::endl;
+    }
 
     if (args.getOpt('h') || args.getOpt("help")) {
         fprintf(stdout,"%s",USAGE);
@@ -428,7 +432,6 @@ void processOptions(int argc, char* argv[]) {
 
     outfname_removed=args.getOpt('r');
 
-    verbose=(args.getOpt("verbose")!=NULL || args.getOpt('V')!=NULL);
     if (verbose) {
         std::cout << std::endl;
         fprintf(stderr, "Running Vacuum " VERSION ". Command line:\n");
